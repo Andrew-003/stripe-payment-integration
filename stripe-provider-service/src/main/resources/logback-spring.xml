@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration> 
+    <property name="archive" value="@logging.path@/archive"/> 
+    
+    <springProperty scope="context" name="log-path" source="logging.path"/>
+    <springProperty scope="context" name="springAppName" source="spring.application.name"/>
+
+
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder> 
+            <pattern>[%-5level] %d{yyyy-MM-dd HH:mm:ss.SSS} [%X{traceId:-}] [%X{spanId:-}] [%thread] [${springAppName}] %logger - %msg%n</pattern>
+        </encoder>
+    </appender>   
+
+    <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>@logging.path@/${springAppName}.log</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+            <!--<fileNamePattern>@logging.path@/${springAppName}.log.%d{yyyy-MM-dd_HH-mm}</fileNamePattern>-->
+            <fileNamePattern>@logging.path@/${springAppName}.log.%d{yyyy-MM-dd_HH-mm-ss}</fileNamePattern>
+            <maxHistory>20</maxHistory>
+        </rollingPolicy>
+        <encoder>
+            <pattern>[%-5level] %d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] [${springAppName}] %logger - %msg%n</pattern>
+        </encoder>
+    </appender>
+    
+    <logger name="com.hulkhiretech.payments" level="TRACE" additivity="false">
+        <appender-ref ref="FILE" />
+        <appender-ref ref="CONSOLE" />
+    </logger>
+
+    <root level="INFO"> 
+        <appender-ref ref="CONSOLE" />  
+        <appender-ref ref="FILE" />
+    </root>
+</configuration>
