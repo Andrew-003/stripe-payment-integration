@@ -18,9 +18,7 @@ This system consists of three main microservices:
 - **Webhook Support**: Real-time payment status updates via Stripe webhooks
 - **Database Persistence**: MySQL database for transaction storage
 - **Multi-Environment Support**: Configurable for local, dev, and production environments
-- **Circuit Breaker**: Resilience4j for fault tolerance
-- **Distributed Tracing**: Micrometer tracing for monitoring
-- **Async Processing**: Support for asynchronous payment operations
+
 
 ## Technology Stack
 
@@ -33,8 +31,7 @@ This system consists of three main microservices:
 - **Lombok**
 - **Gson**
 - **ModelMapper**
-- **Resilience4j**
-- **Micrometer Tracing**
+
 
 ## Database Schema
 
