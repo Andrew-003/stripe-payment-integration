@@ -200,12 +200,7 @@ curl -X POST http://localhost:8083/payments \
   }'
 ```
 
-## Monitoring and Logging
 
-- **Actuator Endpoints**: Health checks and metrics available at `/actuator`
-- **Distributed Tracing**: Request tracing across microservices
-- **Structured Logging**: Comprehensive logging with different levels
-- **Circuit Breaker Monitoring**: Resilience4j circuit breaker status
 
 ## Security Considerations
 
