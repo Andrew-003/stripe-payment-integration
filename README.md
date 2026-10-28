@@ -4,9 +4,14 @@ A microservices-based payment processing system that integrates with Stripe for 
 
 ## Architecture Overview
 
+
 <p align="center">
-  <img src="https://drive.google.com/thumbnail?id=1dzyelS7dpgs68DWTiixHqT5ORxIlLHBH&sz=w400" width="520" alt="Project Screenshot">
-</p>  
+  <img
+    src="./imgstripe-intgtn-systm-arc.png"
+    alt="Stripe Integration System Architecture"
+    width="800"
+  />
+</p> 
 
 This system consists of three main microservices:
 
