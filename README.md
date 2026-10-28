@@ -4,6 +4,10 @@ A microservices-based payment processing system that integrates with Stripe for 
 
 ## Architecture Overview
 
+<p align="center">
+  <img src="https://drive.google.com/thumbnail?id=1dzyelS7dpgs68DWTiixHqT5ORxIlLHBH&sz=w400" width="520" alt="Project Screenshot">
+</p>  
+
 This system consists of three main microservices:
 
 1. **Eureka Service Registry** (Port: 8761) - Service discovery and registration
