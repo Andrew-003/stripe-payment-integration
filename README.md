@@ -1,239 +1,299 @@
-# Stripe Payment Integration System
+# Distributed Stripe Payment Integration System
 
-A microservices-based payment processing system that integrates with Stripe for handling online payments. The system is built using Spring Boot and follows a distributed architecture pattern.
+A production-grade, distributed payment processing engine built with Spring Boot, Netflix Eureka, and Resilience4j. Designed with clean separation of concerns, strict state-machine lifecycle management, asynchronous webhook reconciliation, and circuit-breaker fault tolerance.
+
+---
 
 ## Architecture Overview
 
+![Stripe Integration System Architecture](stripe-integration-system-architecture.png)
 
-<p align="center">
-  <img src="./stripe-intgtn-systm-arc.png" alt="Stripe Integration System Architecture" width="800">
-</p>
+The system isolates transaction lifecycle management from external payment gateway communication across three dedicated services:
 
-This system consists of three main microservices:
+1. **Eureka Service Registry (`:8761`)**: Central service discovery coordinating inter-service routing and client-side load balancing.
+2. **Payment Processing Service (`:8082`)**: Core orchestrator managing transaction persistence in MySQL, enforcing state machine transitions (`CREATED` → `INITIATED` → `PENDING` → `SUCCESS` / `FAILED`), and maintaining historical transaction logs.
+3. **Stripe Provider Service (`:8083`)**: Gateway adapter encapsulating the Stripe Java SDK, managing Checkout Session creation, and non-blocking webhook verification.
 
-1. **Eureka Service Registry** (Port: 8761) - Service discovery and registration
-2. **Payment Processing Service** (Port: 8082) - Core payment transaction management
-3. **Stripe Provider Service** (Port: 8083) - Stripe integration and webhook handling
+---
 
-## Features
+## Key Design Patterns & Engineering Highlights
 
-- **Microservices Architecture**: Distributed system with service discovery
-- **Stripe Integration**: Complete Stripe payment gateway integration
-- **Transaction Management**: Full lifecycle payment transaction handling
-- **Webhook Support**: Real-time payment status updates via Stripe webhooks
-- **Database Persistence**: MySQL database for transaction storage
-- **Multi-Environment Support**: Configurable for local, dev, and production environments
+* **State & Strategy Pattern (Lifecycle Management):** Transaction states are encapsulated into dedicated status processors (`CreatedStatusProcessor`, `InitiatedStatusProcessor`, `PendingStatusProcessor`, `SuccessStatusProcessor`, `FailedStatusProcessor`) managed via a centralized `PaymentStatusFactory`. New payment events or states can be introduced without modifying core service classes.
+* **Fault Tolerance via Resilience4j:** Outbound HTTP calls from `Payment Processing Service` to `Stripe Provider Service` are protected by a `@CircuitBreaker`. If external failure rates exceed configured thresholds, executions route to fallback handlers (`fallbackProcessPayment`), returning controlled `503 Service Unavailable` signals to prevent thread pool starvation.
+* **Asynchronous Webhook Ingestion:** Inbound Stripe webhook events are ingested via non-blocking handlers using `@Async`. Payloads are cryptographically verified using `HMAC-SHA256` signatures against configured webhook secrets before notifying the core processing engine.
+* **Internal Reconciliation Hook:** Once verified, `Stripe Provider Service` notifies `Payment Processing Service` via `POST /v1/payments/notifications`, triggering state mutations and immutable audit logging.
+* **Direct JDBC Persistence:** Opts for `NamedParameterJdbcTemplate` for explicit, optimized SQL execution and low overhead. Uses `ModelMapper` with bidirectional custom converters to map external string DTO contracts to numeric database foreign keys.
 
+---
 
-## Technology Stack
+## Core Technology Stack
 
-- **Java 17**
-- **Spring Boot 3.4.2**
-- **Spring Cloud 2024.0.1**
-- **MySQL 8.0.33**
-- **Stripe Java SDK 29.5.0**
-- **Maven**
-- **Lombok**
-- **Gson**
-- **ModelMapper**
+* **Language:** Java 17
+* **Frameworks:** Spring Boot 3.4.2, Spring Cloud 2024.0.1 (Netflix Eureka)
+* **Fault Tolerance:** Resilience4j Circuit Breaker
+* **Persistence:** MySQL 8.0, Spring JDBC (`NamedParameterJdbcTemplate`)
+* **Payment Gateway:** Stripe Java SDK 29.5.0
+* **Utilities:** ModelMapper, Lombok, Gson, SLF4J
 
+---
+
+## API Endpoints
+
+### 1. Payment Processing Service (`:8082`)
+
+| Method | Endpoint | Description |
+| :--- | :--- | :--- |
+| `POST` | `/v1/payments` | Creates a new transaction record (`CREATED`). |
+| `POST` | `/v1/payments/{txnReference}/initiate` | Initiates checkout session with provider (`PENDING`). |
+| `POST` | `/v1/payments/notifications` | Internal callback endpoint receiving webhook reconciliations. |
+
+### 2. Stripe Provider Service (`:8083`)
+
+| Method | Endpoint | Description |
+| :--- | :--- | :--- |
+| `POST` | `/payments` | Creates a Stripe Checkout Session via Stripe Java SDK. |
+| `GET` | `/payments/{id}` | Retrieves Stripe payment session details. |
+| `POST` | `/payments/{id}/expire` | Expires an active checkout session. |
+| `POST` | `/v1/stripe/webhook` | Ingests and verifies Stripe HMAC-SHA256 webhook signatures. |
+
+### 3. Eureka Service Registry (`:8761`)
+
+* Dashboard: `http://localhost:8761`
+
+---
 
 ## Database Schema
 
-The system uses a MySQL database with the following main tables:
+```sql
+Transaction:
+  - id (BIGINT, PK, Auto-Increment)
+  - user_id (INT)
+  - payment_method_id (INT, FK -> Payment_Method.id)
+  - provider_id (INT, FK -> Provider.id)
+  - payment_type_id (INT, FK -> Payment_Type.id)
+  - txn_status_id (INT, FK -> Transaction_Status.id)
+  - txn_reference (VARCHAR(100), UNIQUE)
+  - provider_reference (VARCHAR(100), NULL)
+  - amount (DECIMAL)
+  - currency (VARCHAR(3))
+  - created_at (TIMESTAMP)
+  - updated_at (TIMESTAMP)
 
-- `Payment_Method` - Payment method types (APM, etc.)
-- `Payment_Type` - Transaction types (SALE, etc.)
-- `Provider` - Payment providers (STRIPE, etc.)
-- `Transaction_Status` - Transaction statuses (CREATED, INITIATED, PENDING, SUCCESS, FAILED)
-- `Transaction` - Main transaction records
-- `Transaction_Log` - Transaction status change logs
+Transaction_Log:
+  - id (BIGINT, PK)
+  - txn_id (BIGINT, FK -> Transaction.id)
+  - old_status_id (INT)
+  - new_status_id (INT)
+  - updated_at (TIMESTAMP)
 
-## Prerequisites
-
-- Java 17 or higher
-- Maven 3.6 or higher
-- MySQL 8.0 or higher
-- Stripe account with API keys
-- Git
-
-## Installation
-
-### 1. Clone the Repository
-```bash
-git clone <repository-url>
-cd stripe-payment-integration
 ```
 
-### 2. Database Setup
+---
 
-Execute the database scripts in order:
+## Execution Workflow (Postman Request & Response Samples)
+
+### 1. Create Payment Transaction
+
+* **Endpoint:** `POST http://localhost:8082/v1/payments`
+* **Headers:** `Content-Type: application/json`
+
+**Request Body:**
+
+```json
+{
+  "userId": 101,
+  "amount": 50.00,
+  "currency": "USD",
+  "paymentMethodId": 1,
+  "providerId": 1,
+  "paymentTypeId": 1
+}
+
+```
+
+**Response (`201 Created`):**
+
+```json
+{
+  "status": "SUCCESS",
+  "message": "Payment record created successfully",
+  "data": {
+    "txnReference": "txn_8f9a2b1c-7d3e-4b5a-9f0e-1a2b3c4d5e6f",
+    "status": "CREATED",
+    "amount": 50.00,
+    "currency": "USD",
+    "createdAt": "2026-11-04T09:40:00Z"
+  }
+}
+
+```
+
+---
+
+### 2. Initiate Payment Session
+
+* **Endpoint:** `POST http://localhost:8082/v1/payments/{{txnReference}}/initiate`
+* **Headers:** `Content-Type: application/json`
+
+**Request Body:**
+
+```json
+{
+  "returnUrl": "http://localhost:3000/payment/success",
+  "cancelUrl": "http://localhost:3000/payment/cancel"
+}
+
+```
+
+**Response (`200 OK`):**
+
+```json
+{
+  "status": "SUCCESS",
+  "message": "Checkout session initialized",
+  "data": {
+    "txnReference": "txn_8f9a2b1c-7d3e-4b5a-9f0e-1a2b3c4d5e6f",
+    "status": "PENDING",
+    "providerReference": "cs_test_a1b2c3d4e5f6g7h8",
+    "redirectUrl": "[https://checkout.stripe.com/c/pay/cs_test_a1b2c3d4e5f6g7h8](https://checkout.stripe.com/c/pay/cs_test_a1b2c3d4e5f6g7h8)"
+  }
+}
+
+```
+
+---
+
+### 3. Stripe Webhook Ingestion (External Provider)
+
+* **Endpoint:** `POST http://localhost:8083/v1/stripe/webhook`
+* **Headers:**
+* `Content-Type: application/json`
+* `Stripe-Signature: t=1730713200,v1=5257a869e7ecebeda32affa62cd...`
+
+
+
+**Sample Event Payload:**
+
+```json
+{
+  "id": "evt_1Mv9qoLkdIwHu7ix7QZ6K9z1",
+  "object": "event",
+  "type": "checkout.session.completed",
+  "data": {
+    "object": {
+      "id": "cs_test_a1b2c3d4e5f6g7h8",
+      "payment_status": "paid",
+      "amount_total": 5000,
+      "currency": "usd"
+    }
+  }
+}
+
+```
+
+**Response (`200 OK`):**
+
+```json
+{
+  "received": true
+}
+
+```
+
+---
+
+### 4. Internal Webhook Reconciliation Callback
+
+* **Endpoint:** `POST http://localhost:8082/v1/payments/notifications`
+* **Headers:** `Content-Type: application/json`
+
+**Request Body:**
+
+```json
+{
+  "providerReference": "cs_test_a1b2c3d4e5f6g7h8",
+  "status": "SUCCESS",
+  "message": "Transaction cleared by Stripe gateway"
+}
+
+```
+
+**Response (`200 OK`):**
+
+```json
+{
+  "status": "SUCCESS",
+  "message": "Transaction state updated and logged",
+  "data": {
+    "txnReference": "txn_8f9a2b1c-7d3e-4b5a-9f0e-1a2b3c4d5e6f",
+    "status": "SUCCESS",
+    "updatedAt": "2026-11-04T09:41:15Z"
+  }
+}
+
+```
+
+---
+
+## Getting Started
+
+### Prerequisites
+
+* JDK 17 or higher
+* Maven 3.8+
+* MySQL 8.0+
+* Stripe Developer Account (API keys & Webhook signing secret)
+
+### 1. Database Setup
+
+Execute the SQL scripts in order:
 
 ```bash
-# Create database and tables
+# 1. Create database schema and tables
 mysql -u root -p < db/ddl-script.sql
 
-# Insert initial data
+# 2. Seed lookup tables (Payment Method, Provider, Statuses)
 mysql -u root -p < db/dml-script.sql
+
 ```
 
-### 3. Configuration
+### 2. Configure Environment Properties
 
-Configure the following properties in each service's `application-{profile}.properties`:
+Ensure Stripe keys and database credentials are set in your local properties files:
 
-**Payment Processing Service:**
-- Database connection details
-- Stripe API keys (if needed)
-- Service URLs
+**`stripe-provider-service/src/main/resources/application.properties`**:
 
-**Stripe Provider Service:**
-- Stripe API keys (publishable and secret)
-- Webhook endpoint configuration
-- Service URLs
+```properties
+stripe.api.key=sk_test_yourStripeSecretKey
+stripe.webhook.secret=whsec_yourWebhookSecret
 
-**Eureka Service Registry:**
-- Service registry configuration
+```
 
-### 4. Build Services
+**`payment-processing-service/src/main/resources/application.properties`**:
 
-Build each service individually:
+```properties
+spring.datasource.url=jdbc:mysql://localhost:3306/payment_db
+spring.datasource.username=root
+spring.datasource.password=yourpassword
+
+```
+
+### 3. Build & Run Services
+
+Start services in sequence:
 
 ```bash
-# Build Eureka Service Registry
+# 1. Eureka Registry
 cd eureka-service-registry
-mvn clean install
+mvn clean spring-boot:run
 
-# Build Payment Processing Service
+# 2. Payment Processing Service
 cd ../payment-processing-service
-mvn clean install
+mvn clean spring-boot:run
 
-# Build Stripe Provider Service
+# 3. Stripe Provider Service
 cd ../stripe-provider-service
-mvn clean install
+mvn clean spring-boot:run
+
 ```
-
-## Usage
-
-### Starting the Services
-
-Start the services in the following order:
-
-1. **Eureka Service Registry**
-```bash
-cd eureka-service-registry
-mvn spring-boot:run
-```
-
-2. **Payment Processing Service**
-```bash
-cd payment-processing-service
-mvn spring-boot:run
-```
-
-3. **Stripe Provider Service**
-```bash
-cd stripe-provider-service
-mvn spring-boot:run
-```
-
-### API Endpoints
-
-#### Payment Processing Service (Port: 8082)
-
-- `POST /v1/payments` - Create a new transaction
-- `POST /v1/payments/{txnReference}/initiate` - Initiate a payment transaction
-- `POST /v1/payments/notifications` - Process payment notifications
-
-#### Stripe Provider Service (Port: 8083)
-
-- `POST /payments` - Create a Stripe payment
-- `GET /payments/{id}` - Retrieve payment details
-- `POST /payments/{id}/expire` - Expire a payment
-- `POST /v1/stripe/webhook` - Handle Stripe webhooks
-
-#### Eureka Service Registry (Port: 8761)
-
-- Dashboard available at: `http://localhost:8761`
-
-### Environment Profiles
-
-The system supports multiple environments:
-
-- **local** (default): Local development
-- **dev**: Development environment
-- **prod**: Production environment
-
-Activate profiles using:
-```bash
-mvn spring-boot:run -Dspring-boot.run.profiles=dev
-```
-
-## API Examples
-
-### Create a Payment Transaction
-```bash
-curl -X POST http://localhost:8082/v1/payments \
-  -H "Content-Type: application/json" \
-  -d '{
-    "userId": 123,
-    "amount": 100.00,
-    "currency": "USD",
-    "paymentMethodId": 1,
-    "providerId": 1,
-    "paymentTypeId": 1
-  }'
-```
-
-### Initiate a Payment
-```bash
-curl -X POST http://localhost:8082/v1/payments/{txnReference}/initiate \
-  -H "Content-Type: application/json" \
-  -d '{
-    "returnUrl": "https://your-site.com/return",
-    "cancelUrl": "https://your-site.com/cancel"
-  }'
-```
-
-### Create Stripe Payment
-```bash
-curl -X POST http://localhost:8083/payments \
-  -H "Content-Type: application/json" \
-  -d '{
-    "amount": 10000,
-    "currency": "usd",
-    "paymentMethod": "pm_card_visa"
-  }'
-```
-
-
-
-## Security Considerations
-
-- Stripe webhook signature verification
-- API key management (use environment variables)
-- Database connection security
-- HTTPS configuration for production
-
-## Development
-
-### Running Tests
-```bash
-mvn test
-```
-
-### Code Style
-- Uses Lombok for boilerplate code reduction
-- Follows Spring Boot conventions
-- Implements proper error handling and logging
-
-### Adding New Payment Providers
-
-1. Create a new provider service module
-2. Implement the PaymentService interface
-3. Add provider configuration
-4. Update database with new provider
-5. Register with Eureka
-
-
-
 
